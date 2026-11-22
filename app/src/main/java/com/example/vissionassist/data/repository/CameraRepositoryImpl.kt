@@ -1,5 +1,6 @@
 package com.example.vissionassist.data.repository
 
+import androidx.camera.core.ImageCapture
 import com.example.vissionassist.domain.model.CapturedImage
 import com.example.vissionassist.domain.repository.CameraRepository
 import com.example.vissionassist.data.device.camera.PhoneCameraDataSource
@@ -15,4 +16,7 @@ class CameraRepositoryImpl (
         return phoneCameraDataSource.captureImage()
     }
 
+    fun updateImageCapture(newImageCapture: ImageCapture) {
+        phoneCameraDataSource.updateImageCapture(newImageCapture)
+    }
 }
