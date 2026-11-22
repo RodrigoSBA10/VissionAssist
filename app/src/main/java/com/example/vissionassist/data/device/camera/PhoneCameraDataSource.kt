@@ -12,12 +12,16 @@ import kotlin.coroutines.resumeWithException
 // Fuente de datos de la camara
 class PhoneCameraDataSource(
     // Inyeccion de la clase ImageCapture
-    private val imageCapture: ImageCapture,
+    @Volatile private var imageCapture: ImageCapture,
     // Inyeccion de la clase Executor
     private val outputDirectory: File,
     // Inyeccion de la clase Executor
     private val executor: Executor
 ){
+
+    fun updateImageCapture(newImageCapture: ImageCapture) {
+        imageCapture = newImageCapture
+    }
     // Metodo de la interfaz CameraDataSource
     suspend fun captureImage(): CapturedImage =
         suspendCancellableCoroutine { continuation ->
@@ -32,11 +36,11 @@ class PhoneCameraDataSource(
             val outputOptions = ImageCapture.OutputFileOptions
                 .Builder(photoFile)
                 .build()
+            val currentImageCapture = imageCapture
             // Captura de la imagen
-            imageCapture.takePicture(
+            currentImageCapture.takePicture(
                 outputOptions,
                 executor,
-
                 object : ImageCapture.OnImageSavedCallback {
                     // Metodo de la interfaz ImageCapture.OnImageSavedCallback
                     override fun onImageSaved(

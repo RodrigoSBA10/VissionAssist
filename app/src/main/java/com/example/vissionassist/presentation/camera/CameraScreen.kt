@@ -32,9 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.vissionassist.data.device.camera.CameraManager
@@ -45,6 +47,10 @@ import com.example.vissionassist.data.repository.CameraRepositoryImpl
 import com.example.vissionassist.data.repository.ImageAnalysisRepositoryImpl
 import com.example.vissionassist.domain.usecase.AnalyzeImageUseCase
 import com.example.vissionassist.domain.usecase.CapturedImageUseCase
+import com.example.vissionassist.data.device.speech.TextToSpeechManager
+import com.example.vissionassist.data.mlkit.MLKitTextAnalyzer
+import com.example.vissionassist.data.repository.TextRecognitionRepositoryImpl
+import com.example.vissionassist.domain.usecase.RecogTextUseCase
 
 // Vista de la camara
 @Composable
@@ -53,7 +59,9 @@ fun CameraScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
+    val textSpeechManager = remember(context) {
+        TextToSpeechManager(context)
+    }
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -73,25 +81,52 @@ fun CameraScreen(
         CameraManager(context)
     }
 
-    val cameraRepository = remember(cameraManager, context) {
-        CameraRepositoryImpl(
-            phoneCameraDataSource = PhoneCameraDataSource(
-                imageCapture = cameraManager.imageCapture,
-                outputDirectory = context.cacheDir,
-                executor = ContextCompat.getMainExecutor(context)
-            )
+    val repositoryHolder: CameraRepositoryHolder = viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(
+                modelClass: Class<T>
+            ) : T {
+                return CameraRepositoryHolder(
+                    CameraRepositoryImpl(
+                        phoneCameraDataSource = PhoneCameraDataSource(
+                            imageCapture = cameraManager.imageCapture,
+                            outputDirectory = context.filesDir,
+                            executor = ContextCompat.getMainExecutor(context)
+                        )
+                    )
+                ) as T
+            }
+        }
+    )
+
+    val cameraRepository = repositoryHolder.repository
+
+    LaunchedEffect(cameraManager, cameraRepository) {
+        cameraRepository.updateImageCapture(
+            cameraManager.imageCapture
         )
     }
 
     val capturedImageUseCase = remember(cameraRepository) {
         CapturedImageUseCase(cameraRepository)
     }
-
-    val mlKitImageAnalyzer = remember {
-        MLKitImageAnalyzer()
-    }
     val efficientDetImageAnalyzer = remember(context) {
         EfficientDetImageAnalyzer(context)
+    }
+
+    val textAnalyzerHolder : TextAnalyzerHolder = viewModel()
+
+    val mlKitTextAnalyzer = textAnalyzerHolder.analyzer
+
+    val textRecognitionRepository = remember(mlKitTextAnalyzer) {
+        TextRecognitionRepositoryImpl(
+            mlKitTextAnalyzer
+        )
+    }
+
+    val recognizeTextUseCase = remember(textRecognitionRepository) {
+        RecogTextUseCase(textRecognitionRepository)
     }
 
     val imageAnalysisRepository = remember(efficientDetImageAnalyzer/*mlKitImageAnalyzer*/) {
@@ -107,7 +142,8 @@ fun CameraScreen(
 
     val cameraViewModel: CameraViewModel = viewModel(
         factory = CameraViewModelFactory(capturedImageUseCase,
-            analyzeImageUseCase)
+            analyzeImageUseCase,
+            recognizeTextUseCase)
     )
 
     val capturedImage by cameraViewModel.capturedImage.collectAsState()
@@ -115,11 +151,21 @@ fun CameraScreen(
     val analysisResult by cameraViewModel.analysisResult.collectAsState()
     val isProcessing by cameraViewModel.isProcessing.collectAsState()
     val isCameraReady by cameraManager.isCameraReady.collectAsState()
+    val recognizedText by cameraViewModel.recognizedText.collectAsState()
     LaunchedEffect(analysisResult) {
         analysisResult?.let { result ->
             Log.d("Launch", "Descripcion: ${result.description}")
             Log.d("Launch", "Objetos detectados: ${result.detectedObjects}")
             Log.d("Launch", "Advertencias: ${result.warnings}")
+            textSpeechManager.speak(
+                result.description
+            )
+        }
+    }
+    LaunchedEffect(recognizedText) {
+        recognizedText?.let { text ->
+            Log.d("VisionAssist", "Reproduciento Texto reconocido: $text")
+            textSpeechManager.speak(text)
         }
     }
     LaunchedEffect(capturedImage) {
@@ -137,6 +183,11 @@ fun CameraScreen(
 
     val previewView = remember(context) {
         PreviewView(context)
+    }
+    DisposableEffect(textSpeechManager) {
+        onDispose {
+            textSpeechManager.shutdown()
+        }
     }
     DisposableEffect(
         hasCameraPermission,
@@ -204,7 +255,17 @@ fun CameraScreen(
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
-
+                recognizedText?.let { text ->
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Texto roeconocido:",
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(text = text)
+                    }
+                }
                 // Mensaje de error
                 captureError?.let { error ->
                     Text(
@@ -215,25 +276,50 @@ fun CameraScreen(
                 }
             }
 
-            // Botón para capturar la fotografía
-            Button(
-                onClick = {
-                    if (isCameraReady && !isProcessing) {
-                        cameraViewModel.captureImage()
-                    }
-                },
-                enabled = isCameraReady && !isProcessing,
+
+            Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 32.dp)
+                    .padding(bottom = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(
-                    text = when {
-                        !isCameraReady -> "Iniciando cámara..."
-                        isProcessing -> "Analizando..."
-                        else -> "Capturar imagen"
-                    }
-                )
+
+                // Botón para reconocer objetos
+                Button(
+                    onClick = {
+                        if (isCameraReady && !isProcessing) {
+                            cameraViewModel.captureImage()
+                        }
+                    },
+                    enabled = isCameraReady && !isProcessing
+                ) {
+                    Text(
+                        text = when {
+                            !isCameraReady -> "Iniciando cámara..."
+                            isProcessing -> "Analizando..."
+                            else -> "Reconocer objetos"
+                        }
+                    )
+                }
+
+                // Botón para reconocer texto mediante OCR
+                Button(
+                    onClick = {
+                        if (isCameraReady && !isProcessing) {
+                            cameraViewModel.recognizeText()
+                        }
+                    },
+                    enabled = isCameraReady && !isProcessing
+                ) {
+                    Text(
+                        text = when {
+                            !isCameraReady -> "Iniciando cámara..."
+                            isProcessing -> "Analizando..."
+                            else -> "Leer texto"
+                        }
+                    )
+                }
             }
         }
     } else {
@@ -262,5 +348,16 @@ fun CameraScreen(
                 Text("Permitir cámara")
             }
         }
+    }
+}
+class CameraRepositoryHolder(
+    val repository: CameraRepositoryImpl
+) : androidx.lifecycle.ViewModel()
+
+class TextAnalyzerHolder : ViewModel(){
+    val analyzer = MLKitTextAnalyzer()
+    override fun onCleared() {
+        analyzer.close()
+        super.onCleared()
     }
 }
