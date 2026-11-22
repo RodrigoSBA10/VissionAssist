@@ -19,7 +19,7 @@ class EfficientDetImageAnalyzer(
             .build()
         val options = ObjectDetector.ObjectDetectorOptions.builder()
             .setBaseOptions(baseOptions)
-            .setScoreThreshold(0.5f)
+            .setScoreThreshold(0.4f)
             .setMaxResults(10)
             .build()
         detector = ObjectDetector.createFromOptions(

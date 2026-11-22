@@ -21,14 +21,41 @@ class ImageAnalysisRepositoryImpl(
         // Analizar la fotografía con ML Kit
         val result = imageAnalyzer.analyzeImage(image)
 
-        val detectedObjects = result.detections().mapNotNull {
-            detection ->
-            val label = detection.categories()
-                .maxByOrNull { category -> category.score() }
-                ?.categoryName()
-                ?.takeIf { it.isNotBlank() }
-            label?.let { translator.translate(it) }
+
+
+        val detectedObjects = result.detections().mapNotNull { detection ->
+
+            val category = detection.categories()
+                .maxByOrNull { it.score() }
+                ?: return@mapNotNull null
+
+            val label = category.categoryName()
+                .takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            val translatedLabel = translator.translate(label)
+
+            val confidence = category.score()
+
+            Log.d(
+                "VisionAssist",
+                "Objeto: $translatedLabel | Confianza: %.2f%%"
+                    .format(confidence * 100)
+            )
+
+            when {
+                confidence >= 0.75f ->
+                    translatedLabel
+
+                confidence >= 0.4f ->
+                    ": $translatedLabel"
+
+                else ->
+                    null
+            }
         }
+
+
         val objectCount = result.detections().size
         // Generar una descripción según el resultado
         val description = when {
@@ -37,7 +64,7 @@ class ImageAnalysisRepositoryImpl(
             }
 
             detectedObjects.isEmpty() -> {
-                "Se detectaron $objectCount posibles objetos en la imagen. " +
+                "Se detectaron $objectCount objetos en la imagen. " +
                         "pero no fue posible identificarlos"
             }
 
